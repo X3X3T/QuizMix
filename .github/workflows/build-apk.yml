@@ -1,6 +1,7 @@
 name: Build QuizMix APK
 
 on:
+  push:
   workflow_dispatch:
 
 permissions:
