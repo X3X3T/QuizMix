@@ -1,5 +1,7 @@
 plugins { id 'com.android.application' }
 
+def ciBuildNumber = System.getenv("GITHUB_RUN_NUMBER") ?: "2"
+
 android {
     namespace 'com.x3x3t.vivoislandbridge'
     compileSdk 35
@@ -7,8 +9,21 @@ android {
         applicationId 'com.x3x3t.vivoislandbridge'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '0.1.0'
+        versionCode ciBuildNumber.toInteger()
+        versionName "0.1." + ciBuildNumber
+    }
+    signingConfigs {
+        stableDevelopment {
+            storeFile file("../signing/vivo-island-bridge-dev.keystore")
+            storePassword "vivoBridgeDev2026"
+            keyAlias "vivoislandbridge"
+            keyPassword "vivoBridgeDev2026"
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.stableDevelopment
+        }
     }
 }
 
