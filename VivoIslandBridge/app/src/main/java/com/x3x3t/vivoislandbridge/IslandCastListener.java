@@ -2,128 +2,192 @@ package com.x3x3t.vivoislandbridge;
 
 import android.app.Notification;
 import android.app.PendingIntent;
-import android.content.ComponentName;
-import android.media.MediaMetadata;
-import android.media.session.MediaController;
-import android.media.session.MediaSessionManager;
-import android.media.session.PlaybackState;
 import android.os.Bundle;
-import android.service.notification.NotificationListenerService;
-import android.service.notification.StatusBarNotification;
+import android.os.Parcelable;
 import android.text.TextUtils;
 import android.util.Log;
 
-import java.util.List;
+import android.service.notification.NotificationListenerService;
+import android.service.notification.StatusBarNotification;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class IslandCastListener extends NotificationListenerService {
     private static final String TAG = "VivoIslandBridge";
-    private String activeNotificationKey;
+    private static final Map<String, String> LAST_CONTENT = new ConcurrentHashMap<>();
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
         if (sbn == null || sbn.getNotification() == null) return;
+        if (!getSharedPreferences("vivo_bridge", MODE_PRIVATE)
+                .getBoolean("bridge_enabled", false)) return;
+
         String sourcePackage = sbn.getPackageName();
-        if (getPackageName().equals(sourcePackage)) return;
-        if (!isVkPackage(sourcePackage)) return;
+        if (TextUtils.isEmpty(sourcePackage) || getPackageName().equals(sourcePackage)) return;
+        if (!isTelegramFamily(sourcePackage)) return;
 
         Notification notification = sbn.getNotification();
+        if ((notification.flags & Notification.FLAG_ONGOING_EVENT) != 0) return;
+
+        // Group summaries usually contain only an unread-count summary. Their child
+        // notifications carry the sender and message, so forwarding both would duplicate it.
+        if ((notification.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return;
+
         Bundle extras = notification.extras;
-        if (extras == null || !isMediaNotification(notification, extras)) return;
+        if (extras == null) return;
 
-        String title = null;
-        String artist = null;
-        boolean playing = true;
+        MessageData data = extractMessage(sourcePackage, extras);
+        if (data == null) return;
 
-        try {
-            MediaSessionManager manager = getSystemService(MediaSessionManager.class);
-            if (manager != null) {
-                List<MediaController> controllers =
-                        manager.getActiveSessions(new ComponentName(this, IslandCastListener.class));
-                for (MediaController controller : controllers) {
-                    if (sourcePackage.equals(controller.getPackageName())) {
-                        MediaMetadata metadata = controller.getMetadata();
-                        if (metadata != null) {
-                            title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE);
-                            artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST);
-                            if (TextUtils.isEmpty(artist)) {
-                                artist = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST);
-                            }
-                        }
-                        PlaybackState state = controller.getPlaybackState();
-                        if (state != null) {
-                            playing = state.getState() == PlaybackState.STATE_PLAYING ||
-                                    state.getState() == PlaybackState.STATE_BUFFERING;
-                        }
-                        break;
-                    }
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Не удалось прочитать активную медиасессию", e);
-        }
+        String key = sbn.getKey();
+        String fingerprint = data.sender + "\n" + data.message;
+        String previous = LAST_CONTENT.put(key, fingerprint);
+        if (fingerprint.equals(previous)) return;
 
-        if (TextUtils.isEmpty(title)) title = stringValue(extras.getCharSequence(Notification.EXTRA_TITLE));
-        if (TextUtils.isEmpty(artist)) artist = stringValue(extras.getCharSequence(Notification.EXTRA_TEXT));
-        CharSequence bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT);
-        if (!TextUtils.isEmpty(bigText) && (TextUtils.isEmpty(artist) || bigText.toString().length() > artist.length())) {
-            artist = bigText.toString();
-        }
-
-        if (TextUtils.isEmpty(title) && TextUtils.isEmpty(artist)) return;
-        if (TextUtils.isEmpty(title)) title = artist;
-        if (TextUtils.isEmpty(artist)) artist = "VK Музыка";
-
+        String appLabel = getAppLabel(sourcePackage);
         PendingIntent click = notification.contentIntent;
-        if (getSharedPreferences("vivo_bridge", MODE_PRIVATE).getBoolean("bridge_enabled", false)) {
-            activeNotificationKey = sbn.getKey();
-            OriginIslandPublisher.publish(this, sourcePackage, title, artist, click, playing);
-        }
+        MessageIslandPublisher.publish(
+                this, sourcePackage, appLabel, data.sender, data.message, click);
+
+        Log.i(TAG, "Forwarded message notification from " + sourcePackage);
     }
 
     @Override
     public void onNotificationRemoved(StatusBarNotification sbn) {
-        if (sbn == null) return;
-        if (activeNotificationKey != null && activeNotificationKey.equals(sbn.getKey())) {
-            activeNotificationKey = null;
-            OriginIslandPublisher.unmount(this);
-        }
+        if (sbn != null) LAST_CONTENT.remove(sbn.getKey());
     }
 
-    private boolean isMediaNotification(Notification notification, Bundle extras) {
-        if (Notification.CATEGORY_TRANSPORT.equals(notification.category) ||
-                extras.containsKey(Notification.EXTRA_MEDIA_SESSION)) return true;
-
-        Notification.Action[] actions = notification.actions;
-        if (actions == null || actions.length < 2) return false;
-        int mediaActions = 0;
-        for (Notification.Action action : actions) {
-            if (action == null || action.title == null) continue;
-            String label = action.title.toString().toLowerCase();
-            if (label.contains("play") || label.contains("pause") ||
-                    label.contains("next") || label.contains("previous") ||
-                    label.contains("восп") || label.contains("пау") ||
-                    label.contains("след") || label.contains("пред")) {
-                mediaActions++;
-            }
-        }
-        return mediaActions >= 2;
-    }
-
-    private boolean isVkPackage(String packageName) {
-        if (packageName == null) return false;
+    private boolean isTelegramFamily(String packageName) {
         String p = packageName.toLowerCase();
-        if (p.contains("vkontakte") || p.contains(".vk") || p.startsWith("vk.")) return true;
+        if (p.equals("org.telegram.messenger") ||
+                p.equals("org.telegram.messenger.web") ||
+                p.equals("com.radolyn.ayugram") ||
+                p.contains("ayugram") ||
+                p.contains("telegram")) {
+            return true;
+        }
+
         try {
             CharSequence label = getPackageManager().getApplicationLabel(
                     getPackageManager().getApplicationInfo(packageName, 0));
             String name = label == null ? "" : label.toString().toLowerCase();
-            return name.contains("vk") || name.contains("вк") || name.contains("музык");
+            return name.contains("telegram") || name.contains("ayugram") || name.contains("аюграм");
         } catch (Exception ignored) {
             return false;
         }
     }
 
-    private String stringValue(CharSequence value) {
-        return value == null ? null : value.toString();
+    private String getAppLabel(String packageName) {
+        try {
+            CharSequence label = getPackageManager().getApplicationLabel(
+                    getPackageManager().getApplicationInfo(packageName, 0));
+            String name = label == null ? packageName : label.toString();
+            String normalized = name.toLowerCase();
+            if (normalized.contains("ayu") || normalized.contains("аю")) return "AyuGram";
+            return "Telegram";
+        } catch (Exception ignored) {
+            return packageName.toLowerCase().contains("ayu") ? "AyuGram" : "Telegram";
+        }
+    }
+
+    private MessageData extractMessage(String packageName, Bundle extras) {
+        String appLabel = getAppLabel(packageName);
+        String title = value(extras.getCharSequence(Notification.EXTRA_TITLE));
+        String bigTitle = value(extras.getCharSequence(Notification.EXTRA_TITLE_BIG));
+        String body = value(extras.getCharSequence(Notification.EXTRA_BIG_TEXT));
+        if (TextUtils.isEmpty(body)) body = value(extras.getCharSequence(Notification.EXTRA_TEXT));
+
+        String conversation = value(extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE));
+        String messageSender = null;
+        String messageText = null;
+
+        try {
+            Parcelable[] messages = extras.getParcelableArray(Notification.EXTRA_MESSAGES);
+            if (messages != null && messages.length > 0) {
+                for (int i = messages.length - 1; i >= 0; i--) {
+                    if (!(messages[i] instanceof Bundle)) continue;
+                    Bundle message = (Bundle) messages[i];
+                    messageText = value(message.getCharSequence("text"));
+                    messageSender = personName(message.get("sender_person"));
+                    if (TextUtils.isEmpty(messageSender)) {
+                        messageSender = personName(message.get("sender"));
+                    }
+                    if (!TextUtils.isEmpty(messageText) || !TextUtils.isEmpty(messageSender)) break;
+                }
+            }
+        } catch (Throwable error) {
+            Log.w(TAG, "Не удалось разобрать MessagingStyle уведомления", error);
+        }
+
+        if (!TextUtils.isEmpty(messageText)) body = messageText;
+
+        String sender = !TextUtils.isEmpty(bigTitle) ? bigTitle : title;
+        if (isGenericTitle(sender, appLabel)) {
+            sender = !TextUtils.isEmpty(messageSender) ? messageSender : conversation;
+        }
+        if (TextUtils.isEmpty(sender)) sender = messageSender;
+        if (TextUtils.isEmpty(sender)) sender = conversation;
+        if (TextUtils.isEmpty(sender)) sender = appLabel;
+
+        if (TextUtils.isEmpty(body)) {
+            // A few Telegram builds expose a structured MessagingStyle array only.
+            body = messageText;
+        }
+        if (TextUtils.isEmpty(body)) return null;
+
+        String lowerBody = body.toLowerCase();
+        if (lowerBody.contains("keep-alive service") ||
+                lowerBody.contains("checking for messages") ||
+                lowerBody.equals("connecting…") ||
+                lowerBody.equals("connecting...")) {
+            return null;
+        }
+
+        return new MessageData(trim(sender, 80), trim(body, 500));
+    }
+
+    private boolean isGenericTitle(String title, String appLabel) {
+        if (TextUtils.isEmpty(title)) return true;
+        String t = title.trim().toLowerCase();
+        return t.equals(appLabel.toLowerCase()) ||
+                t.equals("telegram") || t.equals("ayugram") || t.equals("аюграм") ||
+                t.equals("new messages") || t.equals("новые сообщения");
+    }
+
+    private String personName(Object person) {
+        if (person == null) return null;
+        if (person instanceof CharSequence) return person.toString();
+        if (person instanceof Bundle) {
+            Bundle bundle = (Bundle) person;
+            String name = value(bundle.getCharSequence("name"));
+            if (!TextUtils.isEmpty(name)) return name;
+        }
+        try {
+            Object name = person.getClass().getMethod("getName").invoke(person);
+            return name == null ? null : name.toString();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private String value(CharSequence text) {
+        return text == null ? null : text.toString().trim();
+    }
+
+    private String trim(String value, int max) {
+        if (value == null) return "";
+        String cleaned = value.trim();
+        return cleaned.length() <= max ? cleaned : cleaned.substring(0, max - 1) + "…";
+    }
+
+    private static final class MessageData {
+        final String sender;
+        final String message;
+
+        MessageData(String sender, String message) {
+            this.sender = sender;
+            this.message = message;
+        }
     }
 }
