@@ -2,9 +2,9 @@ package com.x3x3t.vivoislandbridge;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.NotificationManager;
 import android.content.ComponentName;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -12,6 +12,8 @@ import android.provider.Settings;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+
+import java.lang.reflect.Method;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_NOTIFICATIONS = 10;
@@ -27,7 +29,7 @@ public class MainActivity extends Activity {
         layout.setPadding(pad, pad * 2, pad, pad);
 
         TextView title = new TextView(this);
-        title.setText("Vivo Island Bridge 0.2\n\nПеренос VK Музыки на Origin Island\n\nПриложение читает уведомления VK Музыки и передаёт название трека в системный формат OriginOS. Оно не подменяет Spotify или системный плеер.");
+        title.setText("Vivo Island Bridge\n\nTelegram + AyuGram\n\nПриложение переносит новые сообщения из уведомлений Telegram и AyuGram в системный Origin Island через стандартные Android 16 Live Updates. Содержимое обрабатывается только на телефоне.");
         title.setTextSize(18);
         layout.addView(title);
 
@@ -48,15 +50,21 @@ public class MainActivity extends Activity {
         layout.addView(access);
 
         Button enable = new Button(this);
-        enable.setText("Включить перенос на островок");
+        enable.setText("Включить Telegram и AyuGram");
         enable.setOnClickListener(v -> enableBridge());
         layout.addView(enable);
+
+        Button test = new Button(this);
+        test.setText("Тест островка (затем сверни приложение)");
+        test.setOnClickListener(v -> postTest());
+        layout.addView(test);
 
         Button disable = new Button(this);
         disable.setText("Остановить перенос");
         disable.setOnClickListener(v -> {
-            getSharedPreferences("vivo_bridge", MODE_PRIVATE).edit().putBoolean("bridge_enabled", false).apply();
-            OriginIslandPublisher.unmount(this);
+            getSharedPreferences("vivo_bridge", MODE_PRIVATE).edit()
+                    .putBoolean("bridge_enabled", false).apply();
+            MessageIslandPublisher.cancelAll(this);
             refreshStatus();
         });
         layout.addView(disable);
@@ -77,7 +85,8 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
             return;
         }
-        getSharedPreferences("vivo_bridge", MODE_PRIVATE).edit().putBoolean("bridge_enabled", true).apply();
+        getSharedPreferences("vivo_bridge", MODE_PRIVATE).edit()
+                .putBoolean("bridge_enabled", true).apply();
         refreshStatus();
         if (!hasListenerAccess()) {
             try {
@@ -88,6 +97,17 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void postTest() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
+            status.setText("Сначала разреши отправку уведомлений, затем нажми тест ещё раз.");
+            return;
+        }
+        MessageIslandPublisher.publishTest(this);
+        status.setText("Тест отправлен. Сверни приложение на главный экран и проверь Origin Island. Уведомление исчезнет примерно через 12 секунд.");
+    }
+
     private boolean hasListenerAccess() {
         String enabled = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
         if (enabled == null) return false;
@@ -95,21 +115,39 @@ public class MainActivity extends Activity {
         return enabled.contains(component);
     }
 
+    private String promotionStatus() {
+        if (Build.VERSION.SDK_INT < 36) return "Для стандартного Live Update нужен Android 16";
+        try {
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            Method method = NotificationManager.class.getMethod("canPostPromotedNotifications");
+            Object result = method.invoke(manager);
+            return Boolean.TRUE.equals(result)
+                    ? "Android разрешает Live Updates"
+                    : "Android сейчас не разрешает Live Updates";
+        } catch (Throwable ignored) {
+            return "Прошивка не раскрывает статус Live Updates";
+        }
+    }
+
     private void refreshStatus() {
-        boolean enabled = getSharedPreferences("vivo_bridge", MODE_PRIVATE).getBoolean("bridge_enabled", false);
+        boolean enabled = getSharedPreferences("vivo_bridge", MODE_PRIVATE)
+                .getBoolean("bridge_enabled", false);
         boolean listener = hasListenerAccess();
         boolean notifications = Build.VERSION.SDK_INT < 33 ||
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
 
+        String state;
         if (!notifications) {
-            status.setText("Статус: нужно разрешить приложению отправлять уведомления.");
+            state = "Нужно разрешить приложению отправлять уведомления.";
         } else if (!listener) {
-            status.setText("Статус: нужен доступ к уведомлениям. Разреши его для Vivo Island Bridge в системных настройках.");
+            state = "Нужен доступ к уведомлениям. Разреши его для Vivo Island Bridge в системных настройках.";
         } else if (!enabled) {
-            status.setText("Статус: доступ выдан. Нажми «Включить перенос на островок».");
+            state = "Доступ выдан. Нажми «Включить Telegram и AyuGram».";
         } else {
-            status.setText("Статус: включено. Ожидаю уведомление VK Музыки. Само приложение можно свернуть.");
+            state = "Включено. Ожидаю новые сообщения Telegram или AyuGram.";
         }
+
+        status.setText("Статус: " + state + "\n\nLive Updates: " + promotionStatus());
     }
 
     @Override
@@ -119,7 +157,7 @@ public class MainActivity extends Activity {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 enableBridge();
             } else {
-                status.setText("Статус: разрешение на уведомления не выдано.");
+                status.setText("Разрешение на уведомления не выдано.");
             }
         }
     }
