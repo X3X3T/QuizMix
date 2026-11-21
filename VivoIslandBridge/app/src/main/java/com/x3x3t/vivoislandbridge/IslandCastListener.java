@@ -17,7 +17,7 @@ import java.util.List;
 
 public class IslandCastListener extends NotificationListenerService {
     private static final String TAG = "VivoIslandBridge";
-    private String activePackage;
+    private String activeNotificationKey;
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
@@ -74,8 +74,8 @@ public class IslandCastListener extends NotificationListenerService {
         if (TextUtils.isEmpty(artist)) artist = "VK Музыка";
 
         PendingIntent click = notification.contentIntent;
-        activePackage = sourcePackage;
         if (getSharedPreferences("vivo_bridge", MODE_PRIVATE).getBoolean("bridge_enabled", false)) {
+            activeNotificationKey = sbn.getKey();
             OriginIslandPublisher.publish(this, sourcePackage, title, artist, click, playing);
         }
     }
@@ -83,17 +83,30 @@ public class IslandCastListener extends NotificationListenerService {
     @Override
     public void onNotificationRemoved(StatusBarNotification sbn) {
         if (sbn == null) return;
-        if (activePackage != null && activePackage.equals(sbn.getPackageName())) {
-            activePackage = null;
+        if (activeNotificationKey != null && activeNotificationKey.equals(sbn.getKey())) {
+            activeNotificationKey = null;
             OriginIslandPublisher.unmount(this);
         }
     }
 
     private boolean isMediaNotification(Notification notification, Bundle extras) {
-        if (Notification.CATEGORY_TRANSPORT.equals(notification.category)) return true;
-        return extras.containsKey(Notification.EXTRA_MEDIA_SESSION) ||
-                extras.containsKey(Notification.EXTRA_MEDIA_SESSION) ||
-                !TextUtils.isEmpty(extras.getCharSequence(Notification.EXTRA_TITLE));
+        if (Notification.CATEGORY_TRANSPORT.equals(notification.category) ||
+                extras.containsKey(Notification.EXTRA_MEDIA_SESSION)) return true;
+
+        Notification.Action[] actions = notification.actions;
+        if (actions == null || actions.length < 2) return false;
+        int mediaActions = 0;
+        for (Notification.Action action : actions) {
+            if (action == null || action.title == null) continue;
+            String label = action.title.toString().toLowerCase();
+            if (label.contains("play") || label.contains("pause") ||
+                    label.contains("next") || label.contains("previous") ||
+                    label.contains("восп") || label.contains("пау") ||
+                    label.contains("след") || label.contains("пред")) {
+                mediaActions++;
+            }
+        }
+        return mediaActions >= 2;
     }
 
     private boolean isVkPackage(String packageName) {
