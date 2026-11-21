@@ -75,7 +75,7 @@ public class IslandCastListener extends NotificationListenerService {
 
         PendingIntent click = notification.contentIntent;
         activePackage = sourcePackage;
-        if (getPreferences(MODE_PRIVATE).getBoolean("bridge_enabled", false)) {
+        if (getSharedPreferences("vivo_bridge", MODE_PRIVATE).getBoolean("bridge_enabled", false)) {
             OriginIslandPublisher.publish(this, sourcePackage, title, artist, click, playing);
         }
     }
