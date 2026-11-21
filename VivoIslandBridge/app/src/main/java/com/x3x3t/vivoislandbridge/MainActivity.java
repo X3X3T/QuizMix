@@ -55,7 +55,7 @@ public class MainActivity extends Activity {
         Button disable = new Button(this);
         disable.setText("Остановить перенос");
         disable.setOnClickListener(v -> {
-            getPreferences(MODE_PRIVATE).edit().putBoolean("bridge_enabled", false).apply();
+            getSharedPreferences("vivo_bridge", MODE_PRIVATE).edit().putBoolean("bridge_enabled", false).apply();
             OriginIslandPublisher.unmount(this);
             refreshStatus();
         });
@@ -77,7 +77,7 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
             return;
         }
-        getPreferences(MODE_PRIVATE).edit().putBoolean("bridge_enabled", true).apply();
+        getSharedPreferences("vivo_bridge", MODE_PRIVATE).edit().putBoolean("bridge_enabled", true).apply();
         refreshStatus();
         if (!hasListenerAccess()) {
             try {
@@ -96,7 +96,7 @@ public class MainActivity extends Activity {
     }
 
     private void refreshStatus() {
-        boolean enabled = getPreferences(MODE_PRIVATE).getBoolean("bridge_enabled", false);
+        boolean enabled = getSharedPreferences("vivo_bridge", MODE_PRIVATE).getBoolean("bridge_enabled", false);
         boolean listener = hasListenerAccess();
         boolean notifications = Build.VERSION.SDK_INT < 33 ||
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
