@@ -151,7 +151,7 @@ public final class MessageIslandPublisher {
 
     private static String clean(String value, int maxLength) {
         if (value == null) return null;
-        String result = value.replace('\u0000', ' ').trim();
+        String result = value.replace((char) 0, ' ').trim();
         if (result.length() > maxLength) result = result.substring(0, maxLength - 1) + "…";
         return result;
     }
