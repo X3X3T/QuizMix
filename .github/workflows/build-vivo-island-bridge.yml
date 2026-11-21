@@ -20,7 +20,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-      - name: Build debug APK
+      - name: Prepare stable signing key
+        run: |
+          base64 --decode signing/vivo-island-bridge-dev.keystore.b64 > signing/vivo-island-bridge-dev.keystore
+      - name: Build installable APK
         run: gradle assembleDebug
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -28,4 +31,4 @@ jobs:
           name: VivoIslandBridge-debug
           path: VivoIslandBridge/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
